@@ -33,13 +33,29 @@ export function runBatchReplication(config: Partial<SimConfig> = {}, n = 50): Ba
   for (let i = 0; i < n; i++) {
     const sim = new LaundrySimulation(fullConfig);
     sim.running = true;
-    sim.speed = 100;
-    for (let t = 0; t < 200000 && sim.time < sim.config.dayDuration; t++) {
-      sim.tick(0.5);
+    sim.speed = 1;
+    // Fine-grained step (0.1 min ≈ 6 s) → 9,600 ticks per 960-min day.
+    // Small enough that wash/hog completions are detected promptly,
+    // so queue/wait/utilization stats are not biased upward.
+    const dt = 0.1;
+    while (sim.time < sim.config.dayDuration && sim.running) {
+      sim.tick(dt);
     }
+
+    // Recompute precise (un-rounded) KPIs from raw counters
+    const rawAvgWait = sim.totalServed > 0 ? sim.totalWaitTime / sim.totalServed : 0;
+    const totalBusy = sim.machines.reduce((s, m) => {
+      let busy = m.totalBusyTime;
+      if (m.status !== 'free') busy += sim.time - m.lastBusyStart;
+      return s + busy;
+    }, 0);
+    const rawUtil = sim.time > 0
+      ? (totalBusy / (sim.time * sim.config.numMachines)) * 100
+      : 0;
+
     results.push({
-      avgWait: sim.stats.avgWait,
-      utilPercent: sim.stats.utilPercent,
+      avgWait: rawAvgWait,
+      utilPercent: rawUtil,
       peakQueue: sim.stats.peakQueue,
       served: sim.stats.served,
       hogged: sim.stats.hogged,
